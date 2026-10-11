@@ -1,0 +1,48 @@
+--- a/src/core.mjs
++++ b/src/core.mjs
+@@ -59,13 +59,33 @@
+   return out.join('\n');
+ }
+ 
+-export function validateReport(value) {
++export function validateReport(value, mode) {
+   if (!value || typeof value!=='object' || Array.isArray(value)) throw new Error('Invalid report JSON');
+   const required=['project','commit','verdict','executive_summary','runtime_status','runtime_evidence','findings','reuse_assessment','commercial_risks','unverified','next_actions'];
+   for (const field of required) if (!(field in value)) throw new Error(`Missing report field: ${field}`);
+   if (!['CONTINUE','MODIFY','STOP','INCONCLUSIVE'].includes(value.verdict)) throw new Error('Invalid verdict');
+   if (!['PASS','FAIL','PARTIAL','NOT RUN'].includes(value.runtime_status)) throw new Error('Invalid runtime status');
+   for (const field of ['runtime_evidence','findings','reuse_assessment','commercial_risks','unverified','next_actions']) if (!Array.isArray(value[field])) throw new Error(`${field} must be an array`);
++
++  const EV=['check','status','command','observation','negative_control'];
++  value.runtime_evidence.forEach((e,i)=>{
++    if(!e||typeof e!=='object'||Array.isArray(e)) throw new Error(`runtime_evidence[${i}] must be an object`);
++    for(const k of EV) if(typeof e[k]!=='string'||!e[k].trim()) throw new Error(`runtime_evidence[${i}].${k} missing`);
++    if(!['PASS','FAIL','PARTIAL','NOT RUN'].includes(e.status)) throw new Error(`runtime_evidence[${i}].status invalid`);
++  });
++  const F=['title','severity','evidence_type','evidence','location','recommended_fix'];
++  value.findings.forEach((f,i)=>{
++    if(!f||typeof f!=='object'||Array.isArray(f)) throw new Error(`findings[${i}] must be an object`);
++    for(const k of F) if(typeof f[k]!=='string'||!f[k].trim()) throw new Error(`findings[${i}].${k} missing`);
++    if(!['CRITICAL','HIGH','MEDIUM','LOW','INFO'].includes(f.severity)) throw new Error(`findings[${i}].severity invalid`);
++    if(!['OBSERVED','INFERRED','UNKNOWN'].includes(f.evidence_type)) throw new Error(`findings[${i}].evidence_type invalid`);
++  });
++  if (value.runtime_status!=='NOT RUN' && value.runtime_evidence.length===0)
++    throw new Error(`runtime_status "${value.runtime_status}" with zero runtime_evidence - refusing to emit an unearned result`);
++  if (value.runtime_evidence.length===0 && value.findings.some(f=>f.evidence_type==='OBSERVED'))
++    throw new Error('OBSERVED findings present but no runtime evidence recorded');
++  if (mode==='inspect' && value.runtime_status!=='NOT RUN')
++    throw new Error(`inspect mode must return runtime_status NOT RUN, got "${value.runtime_status}"`);
+   return value;
+ }
+ 
+--- a/src/audit.mjs
++++ b/src/audit.mjs
+@@ -55,7 +55,7 @@
+       agent.stdin.on('error',()=>{});
+       agent.stdin.end(prompt);
+     });
+-    const report=validateReport(JSON.parse(readFileSync(responsePath,'utf8')));
++    const report=validateReport(JSON.parse(readFileSync(responsePath,'utf8')),args.mode);
+     // Verify mode changes are never pushed and never leave the disposable workspace.
+     mkdirSync(output,{recursive:true});
+     writeFileSync(join(output,'report.json'),JSON.stringify(report,null,2)+'\n',{mode:0o600});
